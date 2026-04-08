@@ -33,6 +33,9 @@ ENV ENABLE_WEB_INTERFACE=false
 
 ENV PYTHONPATH="/app/env:$PYTHONPATH"
 
+# Create outputs directory for grading results
+RUN mkdir -p /app/env/outputs && chmod 777 /app/env/outputs
+
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
