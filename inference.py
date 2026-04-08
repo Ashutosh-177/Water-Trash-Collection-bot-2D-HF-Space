@@ -139,6 +139,16 @@ def main():
     print(f"  Task level  : {TASK_LEVEL}")
     print(f"  Model       : {MODEL_NAME}")
 
+    # Wait for the environment server to be reachable
+    for _ in range(15):
+        try:
+            import requests
+            requests.get(base + "/health", timeout=2)
+            break
+        except Exception:
+            print(f"Waiting for environment server at {base} ...")
+            time.sleep(2)
+
     # Initialize client synchronously over WebSockets/REST
     with WaterTrashEnv(base_url=base).sync() as client:
         # Reset
