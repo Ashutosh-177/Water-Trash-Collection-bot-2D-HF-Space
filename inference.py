@@ -22,25 +22,22 @@ import time
 
 try:
     import google.generativeai as genai
+    HAS_GENAI = True
 except ImportError:
-    print("ERROR: google-generativeai not installed. Run:")
-    print("  pip install google-generativeai")
-    sys.exit(1)
+    genai = None
+    HAS_GENAI = False
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "dummy")
 ENV_BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:8000")
 TASK_LEVEL = os.environ.get("TASK_LEVEL", "easy")
 MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 
-if not GEMINI_API_KEY:
-    print("ERROR: Set the GEMINI_API_KEY environment variable.")
-    sys.exit(1)
-
-genai.configure(api_key=GEMINI_API_KEY)
+if HAS_GENAI:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 
 # ---------------------------------------------------------------------------
@@ -128,8 +125,11 @@ def main():
     from client import WaterTrashEnv
     from models import WaterTrashAction
 
-    model = genai.GenerativeModel(MODEL_NAME, system_instruction=SYSTEM_PROMPT)
-    chat = model.start_chat()
+    if HAS_GENAI:
+        model = genai.GenerativeModel(MODEL_NAME, system_instruction=SYSTEM_PROMPT)
+        chat = model.start_chat()
+    else:
+        chat = None
 
     base = ENV_BASE_URL.rstrip("/")
 
