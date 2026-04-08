@@ -26,6 +26,20 @@ except ImportError:
 
     from models import WaterTrashAction, WaterTrashObservation
 
+# Required for OpenEnv Grader Support
+from openenv.core.rubrics.base import Rubric
+
+class WaterTrashGrader(Rubric):
+    """Parses observation metadata to generate a valid strictly (0, 1) score."""
+    def forward(self, action: Any, observation: Any) -> float:
+        # Get score strictly from [0.0, 1.0] cumulative reward
+        score = getattr(observation, 'reward', 0.0)
+        if hasattr(observation, 'metadata') and 'cumulative_reward' in observation.metadata:
+            score = observation.metadata['cumulative_reward']
+            
+        # Ensure it is STRICTLY between 0 and 1
+        return max(0.01, min(0.99, float(score)))
+
 
 # ---------------------------------------------------------------------------
 # Task Registry
@@ -111,6 +125,9 @@ class WaterTrashEnvironment(Environment):
         self.drift_velocity_x: float = 0.0
         self.prev_nearest_dist: float = 0.0
         self.cumulative_reward: float = 0.0
+        
+        # Attach OpenEnv compatible rubric grader for hackathon scoring
+        self.rubric = WaterTrashGrader()
 
     # ------------------------------------------------------------------ reset
     def reset(
@@ -208,7 +225,14 @@ class WaterTrashEnvironment(Environment):
         # 6. Termination
         done = len(self.trash_list) == 0 or self._state.step_count >= self.MAX_STEPS
 
-        return self._make_obs(reward=step_reward, done=done)
+        obs = self._make_obs(reward=step_reward, done=done)
+        
+        # 7. Apply standard OpenEnv Rubric grader
+        if hasattr(self, 'rubric') and self.rubric is not None:
+            # Grader specifically calculates a score strictly in (0.0, 1.0) for evaluation
+            obs.reward = float(self._apply_rubric(action, obs))
+            
+        return obs
 
     # ------------------------------------------------------------------ state
     @property
