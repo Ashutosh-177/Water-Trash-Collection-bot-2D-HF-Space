@@ -31,12 +31,17 @@ except ImportError:
 # Configuration
 # ---------------------------------------------------------------------------
 
+# Primary: Hackathon LLM Proxy
+LLM_API_BASE = os.environ.get("API_BASE_URL", "")
+LLM_API_KEY = os.environ.get("API_KEY", "")
+
+# Secondary: Local Gemini directly
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "dummy")
 ENV_BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:8000")
 TASK_LEVEL = os.environ.get("TASK_LEVEL", "easy")
-MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+MODEL_NAME = os.environ.get("MODEL", os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"))
 
-if HAS_GENAI:
+if HAS_GENAI and not LLM_API_BASE:
     genai.configure(api_key=GEMINI_API_KEY)
 
 
@@ -125,7 +130,9 @@ def main():
     from client import WaterTrashEnv
     from models import WaterTrashAction
 
-    if HAS_GENAI:
+    chat_history = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    if HAS_GENAI and not LLM_API_BASE:
         model = genai.GenerativeModel(MODEL_NAME, system_instruction=SYSTEM_PROMPT)
         chat = model.start_chat()
     else:
@@ -138,6 +145,7 @@ def main():
     print(f"  Environment : {base}")
     print(f"  Task level  : {TASK_LEVEL}")
     print(f"  Model       : {MODEL_NAME}")
+    print(f"  LLM Proxy   : {'Active' if LLM_API_BASE else 'Direct Gemini'}")
 
     # Wait for the environment server to be reachable
     for _ in range(15):
@@ -178,14 +186,42 @@ def main():
                 try:
                     time.sleep(1)
                     prompt = build_step_prompt(obs)
-                    response = chat.send_message(prompt)
-                    llm_text = response.text.strip()
+                    chat_history.append({"role": "user", "content": prompt})
+
+                    if LLM_API_BASE and LLM_API_KEY:
+                        # 1. Use Hackathon Proxy
+                        req_data = json.dumps({
+                            "model": MODEL_NAME,
+                            "messages": chat_history,
+                            "temperature": 0.0
+                        }).encode("utf-8")
+                        
+                        req = urllib.request.Request(
+                            f"{LLM_API_BASE.rstrip('/')}/chat/completions",
+                            data=req_data,
+                            headers={
+                                "Authorization": f"Bearer {LLM_API_KEY}",
+                                "Content-Type": "application/json"
+                            }
+                        )
+                        with urllib.request.urlopen(req, timeout=10) as resp:
+                            resp_body = resp.read().decode("utf-8")
+                            llm_text = json.loads(resp_body)["choices"][0]["message"]["content"].strip()
+                    elif chat:
+                        # 2. Use Direct Google Gemini API
+                        response = chat.send_message(prompt)
+                        llm_text = response.text.strip()
+                    else:
+                        raise Exception("No LLM Configured (Missing API proxy and Gemini keys)")
+
+                    chat_history.append({"role": "assistant", "content": llm_text})
+                    
                     move, turn = parse_llm_response(llm_text)
                     source = "LLM"
                 except Exception as e:
                     # If the Gemini quota limit blocks us, seamlessly use our math logic
                     move, turn = deterministic_policy(obs)
-                    llm_text = f"[Quota Exhausted Fallback -> move:{move:.1f}, turn:{turn:.1f}]"
+                    llm_text = f"[{type(e).__name__} Fallback -> move:{move:.1f}, turn:{turn:.1f}]"
                     source = "MATH-FALLBACK"
 
                 # ------ [STEP] ------
