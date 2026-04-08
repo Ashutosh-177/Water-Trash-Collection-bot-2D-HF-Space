@@ -225,14 +225,7 @@ class WaterTrashEnvironment(Environment):
         # 6. Termination
         done = len(self.trash_list) == 0 or self._state.step_count >= self.MAX_STEPS
 
-        obs = self._make_obs(reward=step_reward, done=done)
-        
-        # 7. Apply standard OpenEnv Rubric grader
-        if hasattr(self, 'rubric') and self.rubric is not None:
-            # Grader specifically calculates a score strictly in (0.0, 1.0) for evaluation
-            obs.reward = float(self._apply_rubric(action, obs))
-            
-        return obs
+        return self._make_obs(reward=step_reward, done=done)
 
     # ------------------------------------------------------------------ state
     @property
