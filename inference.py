@@ -2,7 +2,7 @@
 """
 inference.py — LLM-driven agent for the Water Trash Collector using Gemini API.
 
-Uses the google-genai Python client. The prompt describes the
+Uses the google-generativeai Python client.  The prompt describes the
 observation vector and asks the LLM for the next ``move`` (linear_velocity)
 and ``turn`` (angular_velocity) values.
 
@@ -21,10 +21,10 @@ import sys
 import time
 
 try:
-    from google import genai
+    import google.generativeai as genai
 except ImportError:
-    print("ERROR: google-genai not installed. Run:")
-    print("  pip install google-genai")
+    print("ERROR: google-generativeai not installed. Run:")
+    print("  pip install google-generativeai")
     sys.exit(1)
 
 # ---------------------------------------------------------------------------
@@ -40,7 +40,7 @@ if not GEMINI_API_KEY:
     print("ERROR: Set the GEMINI_API_KEY environment variable.")
     sys.exit(1)
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+genai.configure(api_key=GEMINI_API_KEY)
 
 
 # ---------------------------------------------------------------------------
@@ -89,8 +89,10 @@ def build_step_prompt(obs: dict) -> str:
 def deterministic_policy(obs: dict) -> tuple[float, float]:
     """Mathematical fallback if the LLM quota is exhausted."""
     angle = obs.get("nearest_trash_angle", 0.0)
+    # If the trash is mostly in front, speed forward
     if abs(angle) < 0.15:
         return (1.0, 0.0)
+    # Otherwise turn efficiently towards the trash while moving slightly forward
     elif angle > 0:
         return (0.4, 1.0)
     else:
@@ -98,6 +100,7 @@ def deterministic_policy(obs: dict) -> tuple[float, float]:
 
 def parse_llm_response(text: str) -> tuple[float, float]:
     """Extract move/turn from the LLM response string."""
+    # Try to extract JSON from the response
     json_match = re.search(r'\{[^}]+\}', text)
     if json_match:
         try:
@@ -110,29 +113,23 @@ def parse_llm_response(text: str) -> tuple[float, float]:
             )
         except (json.JSONDecodeError, ValueError, TypeError):
             pass
+
+    # Fallback: go straight
     return (1.0, 0.0)
 
 
 # ---------------------------------------------------------------------------
-# Main loop
+# Main loop — uses raw HTTP so we don't require the client package
 # ---------------------------------------------------------------------------
 
 
 def main():
-    try:
-        from client import WaterTrashEnv
-        from models import WaterTrashAction
-    except ImportError:
-        print("ERROR: Cannot import env classes. Make sure you run from the repo root.")
-        sys.exit(1)
+    import requests
+    from client import WaterTrashEnv
+    from models import WaterTrashAction
 
-    # Initialize Gemini chat session
-    chat = client.chats.create(
-        model=MODEL_NAME,
-        config=genai.types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-        ),
-    )
+    model = genai.GenerativeModel(MODEL_NAME, system_instruction=SYSTEM_PROMPT)
+    chat = model.start_chat()
 
     base = ENV_BASE_URL.rstrip("/")
 
@@ -142,18 +139,20 @@ def main():
     print(f"  Task level  : {TASK_LEVEL}")
     print(f"  Model       : {MODEL_NAME}")
 
-    with WaterTrashEnv(base_url=base).sync() as env_client:
+    # Initialize client synchronously over WebSockets/REST
+    with WaterTrashEnv(base_url=base).sync() as client:
         # Reset
-        result = env_client.reset(task_level=TASK_LEVEL)
+        result = client.reset(task_level=TASK_LEVEL)
         obs_obj = result.observation
         done = result.done
         
         step_num = 0
         total_reward = 0.0
-        
+
         while not done:
             step_num += 1
 
+            # Convert Pydantic observation to dict for prompt builder
             obs = {
                 "robot_x": obs_obj.robot_x,
                 "robot_y": obs_obj.robot_y,
@@ -163,16 +162,18 @@ def main():
                 "trash_count": obs_obj.trash_count,
             }
 
+            # Fallback to Math policy if LLM fails
             try:
-                time.sleep(1) # Prevent rate limits
+                time.sleep(1)
                 prompt = build_step_prompt(obs)
                 response = chat.send_message(prompt)
                 llm_text = response.text.strip()
                 move, turn = parse_llm_response(llm_text)
                 source = "LLM"
             except Exception as e:
+                # If the Gemini quota limit blocks us, seamlessly use our math logic
                 move, turn = deterministic_policy(obs)
-                llm_text = f"[Fallback Error: {str(e)} -> move:{move:.1f}, turn:{turn:.1f}]"
+                llm_text = f"[Quota Exhausted Fallback -> move:{move:.1f}, turn:{turn:.1f}]"
                 source = "MATH-FALLBACK"
 
             # ------ [STEP] ------
@@ -180,8 +181,9 @@ def main():
             print(f"  LLM response: {llm_text}")
             print(f"  Action: move={move:.3f}, turn={turn:.3f}")
 
+            # Step the environment
             action = WaterTrashAction(linear_velocity=move, angular_velocity=turn)
-            step_result = env_client.step(action)
+            step_result = client.step(action)
 
             obs_obj = step_result.observation
             reward = step_result.reward if step_result.reward else 0.0
@@ -195,6 +197,7 @@ def main():
         print(f"  Total steps : {step_num}")
         print(f"  Total reward: {total_reward:.4f}")
         print(f"  Remaining Trash : {obs_obj.trash_count}")
+
 
 if __name__ == "__main__":
     main()
