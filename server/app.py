@@ -43,8 +43,22 @@ app = create_app(
     max_concurrent_envs=1,
 )
 
+# Custom addition: Mount our animated Gradio UI over the root path
+try:
+    import gradio as gr
+    import sys
+    import os
+    # Add the root directory to path so we can import web_gui
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+    from web_gui import demo
+    
+    app = gr.mount_gradio_app(app, demo, path="/")
+except Exception as e:
+    print(f"Warning: Could not mount custom Gradio GUI. Running standard OpenEnv server only. Error: {e}")
 
-def main(host: str = "0.0.0.0", port: int = 8000):
+
+
+def main():
     """
     Entry point for direct execution.
 
@@ -53,14 +67,8 @@ def main(host: str = "0.0.0.0", port: int = 8000):
     """
     import uvicorn
 
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--host", type=str, default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8000)
-    args = parser.parse_args()
-    main(host=args.host, port=args.port)
+    main()
