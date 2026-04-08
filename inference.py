@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """
 inference.py — LLM-driven agent for the Water Trash Collector.
-
-Runs ALL THREE task levels (easy, medium, hard) sequentially.
-Writes graded results to outputs/ directory and prints JSON summary.
+Runs 3 tasks (easy, medium, hard) with [START]/[STEP]/[END] output format.
 """
 
 import json
@@ -44,7 +42,6 @@ You are an AI controlling a trash-collecting robot on a 2D water surface.
 Observation: robot_x, robot_y, robot_theta, nearest_trash_dist, nearest_trash_angle, trash_count.
 Goal: collect all trash fast.
 Respond ONLY with JSON: {"move": <-1 to 1>, "turn": <-1 to 1>}
-Strategy: if angle positive turn left, if negative turn right, if small go forward.
 """
 
 def build_step_prompt(obs):
@@ -83,60 +80,6 @@ def call_llm_proxy(messages):
         return json.loads(resp.read().decode())["choices"][0]["message"]["content"].strip()
 
 # ---------------------------------------------------------------------------
-# Run one episode
-# ---------------------------------------------------------------------------
-def run_episode(client, WaterTrashAction, task_level, chat_history, chat=None):
-    result = client.reset(task_level=task_level)
-    obs_obj = result.observation
-    done = result.done
-    step_num = 0
-    collected = 0
-
-    while not done and step_num < 400:
-        step_num += 1
-        obs = {
-            "robot_x": obs_obj.robot_x, "robot_y": obs_obj.robot_y,
-            "robot_theta": obs_obj.robot_theta,
-            "nearest_trash_dist": obs_obj.nearest_trash_dist,
-            "nearest_trash_angle": obs_obj.nearest_trash_angle,
-            "trash_count": obs_obj.trash_count,
-        }
-
-        try:
-            time.sleep(0.5)
-            prompt = build_step_prompt(obs)
-            chat_history.append({"role": "user", "content": prompt})
-            if LLM_API_BASE and LLM_API_KEY:
-                llm_text = call_llm_proxy(chat_history)
-            elif chat:
-                response = chat.send_message(prompt)
-                llm_text = response.text.strip()
-            else:
-                raise Exception("No LLM")
-            chat_history.append({"role": "assistant", "content": llm_text})
-            move, turn = parse_llm_response(llm_text)
-        except Exception:
-            move, turn = deterministic_policy(obs)
-
-        action = WaterTrashAction(linear_velocity=move, angular_velocity=turn)
-        step_result = client.step(action)
-        obs_obj = step_result.observation
-        done = step_result.done
-
-    # Get metadata from final observation
-    metadata = getattr(obs_obj, 'metadata', {})
-    collected = metadata.get('collected', 0)
-    total = metadata.get('total_trash', 1)
-
-    # Compute score: fraction collected, strictly in (0, 1)
-    raw_score = collected / max(total, 1)
-    score = max(0.01, min(0.99, raw_score))
-
-    return {"task_id": task_level, "score": round(score, 4),
-            "steps": step_num, "collected": collected, "total": total,
-            "grader": True}
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -156,37 +99,74 @@ def main():
         try:
             req = urllib.request.Request(base + "/health")
             with urllib.request.urlopen(req, timeout=2) as resp:
-                if resp.status == 200: break
+                if resp.status == 200:
+                    break
         except Exception:
             time.sleep(2)
 
-    results = []
     try:
         for task_level in TASK_LEVELS:
-            # Fresh connection per task
             with WaterTrashEnv(base_url=base).sync() as client:
-                task_result = run_episode(client, WaterTrashAction, task_level, chat_history, chat)
-                results.append(task_result)
-                print(f"[TASK] {task_level}: score={task_result['score']}, "
-                      f"collected={task_result['collected']}/{task_result['total']}, "
-                      f"steps={task_result['steps']}")
+                # === [START] ===
+                print(f"[START] task={task_level}", flush=True)
+
+                result = client.reset(task_level=task_level)
+                obs_obj = result.observation
+                done = result.done
+                step_num = 0
+                total_reward = 0.0
+
+                while not done and step_num < 400:
+                    step_num += 1
+                    obs = {
+                        "robot_x": obs_obj.robot_x,
+                        "robot_y": obs_obj.robot_y,
+                        "robot_theta": obs_obj.robot_theta,
+                        "nearest_trash_dist": obs_obj.nearest_trash_dist,
+                        "nearest_trash_angle": obs_obj.nearest_trash_angle,
+                        "trash_count": obs_obj.trash_count,
+                    }
+
+                    try:
+                        time.sleep(0.5)
+                        prompt = build_step_prompt(obs)
+                        chat_history.append({"role": "user", "content": prompt})
+                        if LLM_API_BASE and LLM_API_KEY:
+                            llm_text = call_llm_proxy(chat_history)
+                        elif chat:
+                            response = chat.send_message(prompt)
+                            llm_text = response.text.strip()
+                        else:
+                            raise Exception("No LLM")
+                        chat_history.append({"role": "assistant", "content": llm_text})
+                        move, turn = parse_llm_response(llm_text)
+                    except Exception:
+                        move, turn = deterministic_policy(obs)
+
+                    action = WaterTrashAction(linear_velocity=move, angular_velocity=turn)
+                    step_result = client.step(action)
+                    obs_obj = step_result.observation
+                    reward = step_result.reward if step_result.reward else 0.0
+                    done = step_result.done
+                    total_reward += reward
+
+                    # === [STEP] ===
+                    print(f"[STEP] step={step_num} reward={reward}", flush=True)
+
+                # Compute score strictly in (0, 1)
+                metadata = getattr(obs_obj, 'metadata', {})
+                collected = metadata.get('collected', 0)
+                total = metadata.get('total_trash', 1)
+                raw_score = collected / max(total, 1)
+                score = max(0.01, min(0.99, raw_score))
+
+                # === [END] ===
+                print(f"[END] task={task_level} score={score} steps={step_num}", flush=True)
+
     except Exception as e:
         import traceback
-        print(f"ERROR: {e}")
-        print(traceback.format_exc())
-
-    # Write results to outputs/ directory
-    os.makedirs("outputs", exist_ok=True)
-    for r in results:
-        with open(f"outputs/{r['task_id']}.json", "w") as f:
-            json.dump(r, f, indent=2)
-
-    # Also write combined results
-    with open("outputs/results.json", "w") as f:
-        json.dump({"tasks": results}, f, indent=2)
-
-    # Print final JSON summary to stdout (for output parser)
-    print(json.dumps({"tasks": results}, indent=2))
+        print(f"ERROR: {e}", flush=True)
+        print(traceback.format_exc(), flush=True)
 
     sys.exit(0)
 
