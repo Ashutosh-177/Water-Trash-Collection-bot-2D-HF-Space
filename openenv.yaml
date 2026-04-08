@@ -1,9 +1,6 @@
+spec_version: 1
 name: water_trash_env
-description: Water Surface Trash Collector RL Environment
-tasks:
-  - id: easy
-    grader: true
-  - id: medium
-    grader: true
-  - id: hard
-    grader: true
+type: space
+runtime: fastapi
+app: server.app:app
+port: 8000

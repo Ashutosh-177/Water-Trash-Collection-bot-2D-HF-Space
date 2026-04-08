@@ -160,6 +160,7 @@ class WaterTrashEnvironment(Environment):
         self.drift_velocity_x = task["drift_velocity_x"]
         self.collected_count = 0
         self.cumulative_reward = 0.0
+        self._reset_rubric()
 
         # Robot always starts at the origin facing right
         self.robot_x = 0.0
@@ -218,14 +219,18 @@ class WaterTrashEnvironment(Environment):
             step_reward += 0.001
         self.prev_nearest_dist = current_nearest
 
-        # 5. Accumulate & clamp to strictly (0, 1) — grader rejects 0.0 and 1.0
+        # 5. Accumulate & clamp
         self.cumulative_reward = min(self.cumulative_reward + step_reward, 0.99)
-        step_reward = max(0.001, min(0.99, step_reward)) if step_reward > 0 else 0.001
 
         # 6. Termination
         done = len(self.trash_list) == 0 or self._state.step_count >= self.MAX_STEPS
 
-        return self._make_obs(reward=step_reward, done=done)
+        obs = self._make_obs(reward=step_reward, done=done)
+        
+        # 7. Run rubric grader — sets rubric.last_score for evaluation
+        obs.reward = self._apply_rubric(action, obs)
+        
+        return obs
 
     # ------------------------------------------------------------------ state
     @property
