@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-water-trash-env"
+version = "0.1.0"
+description = "Water Surface Trash Collector RL Environment for OpenEnv"
+requires-python = ">=3.10"
+dependencies = [
+    # Core OpenEnv runtime
+    "openenv-core[core]>=0.2.2",
+    # Environment-specific dependencies (none beyond stdlib math/random)
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+    "pygame>=2.5.0",
+]
+inference = [
+    "google-generativeai>=0.8.0",
+]
+
+[project.scripts]
+server = "water_trash_env.server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["water_trash_env", "water_trash_env.server"]
+package-dir = { "water_trash_env" = ".", "water_trash_env.server" = "server" }

@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+*.log
+training_logs/
+.gemini/
+trained_models/ppo_*

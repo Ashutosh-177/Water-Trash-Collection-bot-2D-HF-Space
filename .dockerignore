@@ -1,0 +1,16 @@
+__pycache__
+*.pyc
+.git
+.venv
+outputs/
+*.egg-info
+trained_models/
+training_logs/
+assets/
+gui.py
+train.py
+gym_wrapper.py
+run.sh
+out.log
+server.log
+*.log
